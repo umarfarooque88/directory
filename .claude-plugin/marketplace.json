@@ -1,6 +1,6 @@
 {
   "name": "directory",
   "owner": { "name": "umarfarooque88" },
-  "description": "A VS Code-style file explorer pane for Claude Code",
+  "description": "A file tree that lives beside Claude Code",
   "plugins": [{ "name": "directory", "source": "./" }]
 }

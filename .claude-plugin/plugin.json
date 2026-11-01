@@ -1,7 +1,7 @@
 {
   "name": "directory",
   "version": "0.3.0",
-  "description": "Directory: a VS Code-style file explorer pane docked beside the Claude Code chat",
+  "description": "A file tree that lives beside Claude Code: browse and manage files, and see what Claude read and changed",
   "author": { "name": "umarfarooque88" },
   "repository": "https://github.com/umarfarooque88/directory",
   "license": "MIT",

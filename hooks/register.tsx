@@ -16,7 +16,7 @@ const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 const initial: ExplorerView = { expanded: [], mode: { kind: 'idle' }, touched: [], trail: [], showMore: false, tick: 0 }
 const view = atom({ plugin: 'directory', key: 'view' } as const, initial, { shape: 'view-2' })
 
-// `guide` is the indent drawn before the row: one │ per level, like VS Code's indent guides.
+// `guide` is the indent drawn before the row: one │ per level.
 type Row = { path: string; name: string; depth: number; isDir: boolean; guide: string }
 
 async function collect($: $, dir: string, depth: number, open: Set<string>, out: Row[]) {
