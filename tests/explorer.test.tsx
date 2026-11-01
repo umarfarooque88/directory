@@ -3,11 +3,11 @@ import { expect, test } from 'claude-code/testing'
 import { isUnder, join, rel, validName } from '../hooks/paths'
 
 const PANE = {
-  plugin: 'file-explorer',
+  plugin: 'directory',
   component: 'Pane',
-  requestId: 'explorer',
+  requestId: 'directory',
   props: {
-    title: 'Explorer',
+    title: 'Directory',
     isFocused: false,
     bodyColumns: 40,
     placement: 'dock',
@@ -41,13 +41,13 @@ test('lists folders first, hides .git, expands on press', async ($, on) => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const texts = (await ui.findAll({ type: 'Button' })).map(b => b.text).filter(t => /\w\.(ts|md)|src/.test(t ?? ''))
-    expect(texts.join('|')).toBe('▸ src|  a.ts|  z.md')
+    expect(texts.join('|')).toBe('▸ src|● a.ts|● z.md')
     expect(await ui.find({ type: 'Button', text: /\.git/ })).toBe(undefined)
 
     // The kit places the root per platform (C:\proj on Windows): take the row's own key.
     const src = await ui.find({ type: 'Button', text: /src/ })
     await ui.press({ key: src!.key! })
-    expect((await ui.find({ type: 'Button', text: /index\.ts/ }))?.text).toBe('    index.ts')
+    expect((await ui.find({ type: 'Button', text: /index\.ts/ }))?.text).toBe('└ ● index.ts')
     await ui.press({ key: src!.key! }) // collapse again for the next surface
     await ui.unmount()
   }

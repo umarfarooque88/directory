@@ -6,19 +6,20 @@ import { baseOf, isUnder, isWin, join, norm, parentOf, rel, validName } from './
 
 type $ = EngineInterface
 
-const PANE = 'explorer'
-const TITLE = 'Explorer'
+const PANE = 'directory'
+const TITLE = 'Directory'
 const ROW = 'row:'
 const MAX_ROWS = 2000 // ponytail: flat cap, virtualize if huge expanded trees matter
 const HIDDEN = new Set(['.git'])
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 const initial: ExplorerView = { expanded: [], mode: { kind: 'idle' }, touched: [], tick: 0 }
-const view = atom({ plugin: 'file-explorer', key: 'view' } as const, initial, { shape: 'view-1' })
+const view = atom({ plugin: 'directory', key: 'view' } as const, initial, { shape: 'view-1' })
 
-type Row = { path: string; name: string; depth: number; isDir: boolean }
+// `guide` is the indent drawn before the row: │ ├ └ like VS Code's indent guides.
+type Row = { path: string; name: string; depth: number; isDir: boolean; guide: string }
 
-async function collect($: $, dir: string, depth: number, open: Set<string>, out: Row[]) {
+async function collect($: $, dir: string, depth: number, open: Set<string>, out: Row[], prefix = '') {
   const entries = await $.fs.list(dir).catch(() => [])
   const sorted = entries
     .filter(x => !HIDDEN.has(x.name))
@@ -27,12 +28,15 @@ async function collect($: $, dir: string, depth: number, open: Set<string>, out:
         Number(b.kind === 'dir') - Number(a.kind === 'dir') ||
         a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     )
-  for (const x of sorted) {
+  for (const [i, x] of sorted.entries()) {
     if (out.length >= MAX_ROWS) return
     const path = join(dir, x.name)
     const isDir = x.kind === 'dir'
-    out.push({ path, name: x.name, depth, isDir })
-    if (isDir && open.has(path)) await collect($, path, depth + 1, open, out)
+    const isLast = i === sorted.length - 1
+    const guide = depth === 0 ? '' : prefix + (isLast ? '└ ' : '├ ')
+    out.push({ path, name: x.name, depth, isDir, guide })
+    const childPrefix = depth === 0 ? '' : prefix + (isLast ? '  ' : '│ ')
+    if (isDir && open.has(path)) await collect($, path, depth + 1, open, out, childPrefix)
   }
 }
 
@@ -164,18 +168,35 @@ async function activate($: $, row: Row, root: string) {
 
 const guard = ($: $, work: () => Promise<unknown>) => () => void work().catch(err => fail($, err))
 
+// File-type icon colors, VS Code-ish. A colored dot reads as an icon on any font (no Nerd Font needed).
+const EXT_COLOR: Record<string, string> = {
+  ts: '#3b8eea', tsx: '#3b8eea', mts: '#3b8eea', cts: '#3b8eea',
+  js: '#e5c07b', jsx: '#e5c07b', mjs: '#e5c07b', cjs: '#e5c07b',
+  json: '#d19a66', jsonc: '#d19a66', lock: '#7f848e',
+  md: '#56b6c2', mdx: '#56b6c2', txt: '#abb2bf',
+  py: '#4fa3e0', go: '#56b6c2', rs: '#d19a66', java: '#e06c75', rb: '#e06c75', php: '#a48fe0',
+  css: '#c678dd', scss: '#c678dd', html: '#e06c75', vue: '#98c379', svelte: '#e06c75',
+  yml: '#98c379', yaml: '#98c379', toml: '#98c379', ini: '#98c379', env: '#e5c07b',
+  sh: '#98c379', ps1: '#4fa3e0', bat: '#98c379',
+  png: '#c678dd', jpg: '#c678dd', jpeg: '#c678dd', gif: '#c678dd', svg: '#e5c07b', ico: '#c678dd',
+}
+const iconColor = (name: string) => EXT_COLOR[name.slice(name.lastIndexOf('.') + 1).toLowerCase()] ?? '#7f848e'
+const isQuiet = (name: string) => name.startsWith('.') || name.endsWith('.lock') || name === 'node_modules'
+const fit = (text: string, width: number) =>
+  text.length <= width ? text : width <= 1 ? '…' : `${text.slice(0, width - 1)}…`
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'explorer', description: 'Open and focus the file explorer pane' })
+    await $.command.register({ name: 'directory', description: 'Open and focus the Directory pane' })
     void $.ui.open({ id: PANE, title: TITLE })
 
     return next(e)
   })
 
-  on('command.run', { command: 'explorer' }, async $ => {
+  on('command.run', { command: 'directory' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE, focus: true })
 
-    return { text: 'Explorer opened.' }
+    return { text: 'Directory opened.' }
   })
 
   // Highlight what Claude edits, and redraw after anything that may touch the disk.
@@ -204,9 +225,10 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (e.surface === 'mobile') {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>The explorer needs a terminal or desktop session.</Text>
+      return <Text dimColor>Directory needs a terminal or desktop session.</Text>
     }
     const { Box, Text, Button, Input } = $.ui.resolve(e)
+    const width = Math.max(20, e.props.bodyColumns ?? e.viewport?.columns ?? 40)
     const root = await $.session.root()
     const v = await read($, view)
     const rows: Row[] = []
@@ -216,22 +238,38 @@ export const register: Register = on => {
       r.isDir ? touched.some(t => t.startsWith(norm(r.path) + '/')) : touched.includes(norm(r.path))
     const shown = (p: string) => rel(root, p) || baseOf(root)
     const act = (work: () => Promise<unknown>) => guard($, work)
+    const rule = <Text color="subtle">{'─'.repeat(width)}</Text>
 
-    const tool = (hotkey: string, label: string, work: () => Promise<unknown>) => (
-      <Button key={`tb:${hotkey}`} plain hotkey={hotkey} onPress={act(work)}>
+    const tool = (hotkey: string, label: string, work: () => Promise<unknown>, isPrimary = false) => (
+      <Button key={`tb:${hotkey}`} plain hotkey={hotkey} dimColor={!isPrimary} onPress={act(work)}>
         {label}
       </Button>
     )
 
+    const needsSelection = async () => {
+      const { selected } = await read($, view)
+      if (!selected || !(await $.fs.exists(selected))) throw new Error('select a file or folder first')
+      return selected
+    }
+
+    const cancel = (
+      <Button key="cancel" plain hotkey="q" dimColor onPress={act(() => setMode($, { kind: 'idle' }))}>
+        cancel
+      </Button>
+    )
+
     const mode = v.mode
-    const prompt =
+    const dialog =
       mode.kind === 'newFile' || mode.kind === 'newFolder' ? (
-        <Box flexDirection="column">
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
+          <Text bold color="claude">
+            {mode.kind === 'newFile' ? '+ New file' : '+ New folder'}
+            <Text dimColor> in {fit(shown(mode.dir), width - 20)}/</Text>
+          </Text>
           <Input
             key="name"
             autoFocus
-            label={`New ${mode.kind === 'newFile' ? 'file' : 'folder'} in ${shown(mode.dir)}/ `}
-            placeholder="name (a/b.ts makes folders)"
+            placeholder={mode.kind === 'newFile' ? 'name.ts  (a/b.ts makes folders)' : 'folder name'}
             submitLabel="create"
             onSubmit={value =>
               guard($, async () => {
@@ -240,16 +278,16 @@ export const register: Register = on => {
               })()
             }
           />
-          <Button key="cancel" plain onPress={act(() => setMode($, { kind: 'idle' }))}>
-            cancel
-          </Button>
+          {cancel}
         </Box>
       ) : mode.kind === 'rename' ? (
-        <Box flexDirection="column">
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
+          <Text bold color="claude">
+            ✎ Rename <Text dimColor>{fit(shown(mode.path), width - 14)}</Text>
+          </Text>
           <Input
             key="name"
             autoFocus
-            label="Rename to "
             value={baseOf(mode.path)}
             submitLabel="rename"
             onSubmit={value =>
@@ -259,16 +297,15 @@ export const register: Register = on => {
               })()
             }
           />
-          <Button key="cancel" plain onPress={act(() => setMode($, { kind: 'idle' }))}>
-            cancel
-          </Button>
+          {cancel}
         </Box>
       ) : mode.kind === 'delete' ? (
-        <Box flexDirection="column">
-          <Text color="error">
-            Delete {shown(mode.path)}?{isWin(root) ? ' (to Recycle Bin)' : ''}
+        <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
+          <Text bold color="error">
+            ✕ Delete {fit(shown(mode.path), width - 14)}?
           </Text>
-          <Box flexDirection="row" gap={2}>
+          <Text dimColor>{isWin(root) ? 'It goes to the Recycle Bin.' : 'Uses trash if installed, else it is permanent.'}</Text>
+          <Box flexDirection="row" columnGap={2}>
             <Button
               key="yes"
               plain
@@ -280,62 +317,84 @@ export const register: Register = on => {
                 await update($, view, s => ({ ...s, selected: parentOf(mode.path), tick: s.tick + 1 }))
               })}
             >
-              delete
+              <Text color="error">delete</Text>
             </Button>
-            <Button key="no" plain hotkey="n" onPress={act(() => setMode($, { kind: 'idle' }))}>
-              cancel
-            </Button>
+            {cancel}
           </Box>
         </Box>
       ) : null
 
-    const needsSelection = async () => {
-      const { selected } = await read($, view)
-      if (!selected || !(await $.fs.exists(selected))) throw new Error('select a file or folder first')
-      return selected
+    const toolbar = (
+      <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+        {tool('n', 'new file', async () => setMode($, { kind: 'newFile', dir: await targetDir($, root) }), true)}
+        {tool('f', 'new folder', async () => setMode($, { kind: 'newFolder', dir: await targetDir($, root) }), true)}
+        {tool('r', 'rename', async () => setMode($, { kind: 'rename', path: await needsSelection() }), true)}
+        {tool('d', 'delete', async () => setMode($, { kind: 'delete', path: await needsSelection() }), true)}
+        {tool('c', 'copy', async () => {
+          const path = await needsSelection()
+          await update($, view, s => ({ ...s, clip: { path, isCut: false } }))
+        })}
+        {tool('x', 'cut', async () => {
+          const path = await needsSelection()
+          await update($, view, s => ({ ...s, clip: { path, isCut: true } }))
+        })}
+        {tool('v', 'paste', () => paste($, root))}
+        {tool('o', 'open', async () => openExternal($, await needsSelection()))}
+        {tool('z', 'collapse', () => update($, view, s => ({ ...s, expanded: [] })))}
+        {tool('u', 'refresh', () => refresh($))}
+      </Box>
+    )
+
+    const row = (r: Row) => {
+      const isOpen = r.isDir && v.expanded.includes(r.path)
+      const isCut = v.clip?.isCut === true && v.clip.path === r.path
+      const isEdited = isTouched(r)
+      const room = width - r.guide.length - 2 - (isEdited ? 2 : 0)
+      return (
+        <Button key={ROW + r.path} plain onPress={act(() => activate($, r, root))}>
+          <Text color="subtle">{r.guide}</Text>
+          {r.isDir ? (
+            <Text color={isOpen ? 'claude' : 'subtle'}>{isOpen ? '▾ ' : '▸ '}</Text>
+          ) : (
+            <Text color={iconColor(r.name)}>{'● '}</Text>
+          )}
+          <Text
+            color={isEdited ? 'warning' : undefined}
+            dimColor={isCut || (isQuiet(r.name) && !isEdited)}
+            italic={isCut}
+            bold={r.path === v.selected}
+          >
+            {fit(r.name, room)}
+          </Text>
+          {isEdited ? <Text color="warning">{r.isDir ? ' •' : ' M'}</Text> : ''}
+        </Button>
+      )
     }
+
+    const status = [
+      v.selected ? fit(shown(v.selected), width) : 'nothing selected',
+      v.clip ? `${v.clip.isCut ? '✂ cut' : '⧉ copied'} ${baseOf(v.clip.path)}` : '',
+      touched.length ? `${touched.length} edited by Claude` : '',
+    ].filter(Boolean)
 
     return (
       <Box flexDirection="column">
-        <Text bold>{baseOf(root).toUpperCase()}</Text>
-        {prompt ?? (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-            {tool('n', 'file', async () => setMode($, { kind: 'newFile', dir: await targetDir($, root) }))}
-            {tool('f', 'folder', async () => setMode($, { kind: 'newFolder', dir: await targetDir($, root) }))}
-            {tool('r', 'rename', async () => setMode($, { kind: 'rename', path: await needsSelection() }))}
-            {tool('d', 'delete', async () => setMode($, { kind: 'delete', path: await needsSelection() }))}
-            {tool('c', 'copy', async () => {
-              const path = await needsSelection()
-              await update($, view, s => ({ ...s, clip: { path, isCut: false } }))
-              $.ui.toast(`Copied ${baseOf(path)}`)
-            })}
-            {tool('x', 'cut', async () => {
-              const path = await needsSelection()
-              await update($, view, s => ({ ...s, clip: { path, isCut: true } }))
-              $.ui.toast(`Cut ${baseOf(path)}`)
-            })}
-            {tool('v', 'paste', () => paste($, root))}
-            {tool('o', 'open', async () => openExternal($, await needsSelection()))}
-            {tool('z', 'collapse', () => update($, view, s => ({ ...s, expanded: [] })))}
-            {tool('u', 'refresh', () => refresh($))}
-          </Box>
-        )}
-        {rows.length === 0 && <Text dimColor>Empty folder.</Text>}
-        {rows.map(r => (
-          <Button key={ROW + r.path} plain onPress={act(() => activate($, r, root))}>
-            {'  '.repeat(r.depth)}
-            {r.isDir ? (v.expanded.includes(r.path) ? '▾ ' : '▸ ') : '  '}
-            <Text
-              color={isTouched(r) ? 'warning' : undefined}
-              dimColor={v.clip?.isCut === true && v.clip.path === r.path}
-              bold={r.path === v.selected}
-            >
-              {r.name}
-            </Text>
-          </Button>
+        <Text>
+          <Text bold color="claude">◆ DIRECTORY</Text>
+          <Text dimColor> · {fit(baseOf(root), width - 14)}</Text>
+        </Text>
+        {dialog ?? toolbar}
+        {rule}
+        {rows.length === 0 && <Text dimColor>This folder is empty. Press n to create a file.</Text>}
+        {rows.map(row)}
+        {rows.length >= MAX_ROWS && <Text dimColor>… more than {MAX_ROWS} rows; press z to collapse.</Text>}
+        {rule}
+        {status.map(s => (
+          <Text dimColor>{s}</Text>
         ))}
-        {rows.length >= MAX_ROWS && <Text dimColor>… more than {MAX_ROWS} rows; collapse some folders.</Text>}
+        <Text color="subtle">enter open · @ on files · esc back to chat</Text>
       </Box>
     )
   })
 }
+

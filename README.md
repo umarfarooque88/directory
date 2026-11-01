@@ -1,13 +1,13 @@
-# file-explorer
+# Directory
 
-A VS Code-style file explorer for Claude Code. It docks beside the chat, in the same terminal, so you can browse and manage your project's files without leaving your Claude session.
+A VS Code-style file explorer for Claude Code, called Directory. It docks beside the chat, in the same terminal, so you can browse and manage your project's files without leaving your Claude session.
 
 ## Install
 
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install file-explorer --marketplace umarfarooque88/directory
+/plugin install directory --marketplace umarfarooque88/directory
 ```
 
 Answer `y` to add the marketplace, then pick a scope (user scope loads it in every session).
@@ -15,14 +15,14 @@ Answer `y` to add the marketplace, then pick a scope (user scope loads it in eve
 From a shell:
 
 ```
-claude plugin install file-explorer --marketplace umarfarooque88/directory
+claude plugin install directory --marketplace umarfarooque88/directory
 ```
 
 In the desktop app: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `umarfarooque88/directory`, then **Add plugin**.
 
 ## Use
 
-The pane opens by itself at session start on a wide terminal (about 144 columns, 110 once you have opened it before). Type `/explorer` to open it at any width and move the keyboard into it. Esc hands the keyboard back to the prompt.
+The pane opens by itself at session start on a wide terminal (about 144 columns, 110 once you have opened it before). Type `/directory` to open it at any width and move the keyboard into it. Esc hands the keyboard back to the prompt.
 
 | Key | Action |
 | --- | --- |

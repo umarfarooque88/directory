@@ -17,6 +17,6 @@ export type ExplorerView = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'file-explorer': { view: Shaped<ExplorerView> }
+    'directory': { view: Shaped<ExplorerView> }
   }
 }

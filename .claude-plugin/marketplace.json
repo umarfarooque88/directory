@@ -2,5 +2,5 @@
   "name": "directory",
   "owner": { "name": "umarfarooque88" },
   "description": "A VS Code-style file explorer pane for Claude Code",
-  "plugins": [{ "name": "file-explorer", "source": "./" }]
+  "plugins": [{ "name": "directory", "source": "./" }]
 }
