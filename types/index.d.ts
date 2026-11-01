@@ -6,12 +6,17 @@ export type Mode =
 
 export type Clip = { path: string; isCut: boolean }
 
+/** One thing Claude did to a file this session, newest first in `trail`. */
+export type TrailItem = { verb: 'created' | 'edited' | 'read'; path: string; at: number }
+
 export type ExplorerView = {
   expanded: string[]
   selected?: string
   mode: Mode
   clip?: Clip
   touched: string[]
+  trail: TrailItem[]
+  showMore: boolean
   tick: number
 }
 

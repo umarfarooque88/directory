@@ -1,6 +1,6 @@
 {
   "name": "directory",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Directory: a VS Code-style file explorer pane docked beside the Claude Code chat",
   "author": { "name": "umarfarooque88" },
   "repository": "https://github.com/umarfarooque88/directory",

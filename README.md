@@ -34,10 +34,11 @@ The pane opens by itself at session start on a wide terminal (about 144 columns,
 | `d` | Delete, after a confirm (to the Recycle Bin on Windows; `trash` if installed elsewhere, else permanent) |
 | `c` / `x` / `v` | Copy / cut / paste (a clash pastes as `name copy.ext`) |
 | `o` | Open with the system's default app |
+| `m` | Show or hide the second row of keys (copy, cut, paste, open, collapse, refresh) |
 | `z` | Collapse all |
 | `u` | Refresh |
 
-Files Claude writes or edits are highlighted, and so are the folders containing them. The tree refreshes after Claude's tool calls. `.git` is hidden.
+A **This session** list at the top shows what Claude read, created and edited, newest first; Enter on an entry reveals it in the tree. Files Claude changed carry a `◆` in the right-hand column (dim on their folders). The tree refreshes after Claude's tool calls. `.git` is hidden.
 
 ## Requirements
 

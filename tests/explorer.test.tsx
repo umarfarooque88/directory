@@ -40,15 +40,34 @@ test('lists folders first, hides .git, expands on press', async ($, on) => {
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    const texts = (await ui.findAll({ type: 'Button' })).map(b => b.text).filter(t => /\w\.(ts|md)|src/.test(t ?? ''))
-    expect(texts.join('|')).toBe('▸ src|● a.ts|● z.md')
+    const texts = (await ui.findAll({ type: 'Button' })).map(b => b.text?.trimEnd()).filter(t => /\w\.(ts|md)|src/.test(t ?? ''))
+    expect(texts.join('|')).toBe('▸ src|  a.ts|  z.md')
     expect(await ui.find({ type: 'Button', text: /\.git/ })).toBe(undefined)
 
     // The kit places the root per platform (C:\proj on Windows): take the row's own key.
     const src = await ui.find({ type: 'Button', text: /src/ })
     await ui.press({ key: src!.key! })
-    expect((await ui.find({ type: 'Button', text: /index\.ts/ }))?.text).toBe('└ ● index.ts')
+    expect((await ui.find({ type: 'Button', text: /index\.ts/ }))?.text?.trimEnd()).toBe('│   index.ts')
     await ui.press({ key: src!.key! }) // collapse again for the next surface
     await ui.unmount()
   }
+})
+
+test("Claude's edits show in This session and in the gutter", async ($, on) => {
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.list', () => ({ value: [entry('a.ts', 'file')] }))
+  on('tool.call', () => ({ result: {} }))
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /This session/ })).toBe(undefined)
+
+  const row = await ui.find({ type: 'Button', text: /a\.ts/ })
+  const file = row!.key!.slice('row:'.length)
+  await $.tool.call({ tool: 'Edit', file_path: file, old_string: 'x', new_string: 'y' })
+
+  expect((await ui.find({ type: 'Text', text: /This session/ }))?.text).toBe('This session')
+  expect((await ui.find({ type: 'Button', text: /edited/ }))?.text).toMatch(/◆ edited\s+a\.ts\s+now/)
+  expect((await ui.find({ type: 'Button', key: row!.key! }))?.text).toMatch(/a\.ts\s+◆$/)
+  await ui.unmount()
 })

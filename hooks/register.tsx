@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ExplorerView, Mode } from '../types'
+import type { ExplorerView, Mode, TrailItem } from '../types'
 import { baseOf, isUnder, isWin, join, norm, parentOf, rel, validName } from './paths'
 
 type $ = EngineInterface
@@ -13,13 +13,13 @@ const MAX_ROWS = 2000 // ponytail: flat cap, virtualize if huge expanded trees m
 const HIDDEN = new Set(['.git'])
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
-const initial: ExplorerView = { expanded: [], mode: { kind: 'idle' }, touched: [], tick: 0 }
-const view = atom({ plugin: 'directory', key: 'view' } as const, initial, { shape: 'view-1' })
+const initial: ExplorerView = { expanded: [], mode: { kind: 'idle' }, touched: [], trail: [], showMore: false, tick: 0 }
+const view = atom({ plugin: 'directory', key: 'view' } as const, initial, { shape: 'view-2' })
 
-// `guide` is the indent drawn before the row: │ ├ └ like VS Code's indent guides.
+// `guide` is the indent drawn before the row: one │ per level, like VS Code's indent guides.
 type Row = { path: string; name: string; depth: number; isDir: boolean; guide: string }
 
-async function collect($: $, dir: string, depth: number, open: Set<string>, out: Row[], prefix = '') {
+async function collect($: $, dir: string, depth: number, open: Set<string>, out: Row[]) {
   const entries = await $.fs.list(dir).catch(() => [])
   const sorted = entries
     .filter(x => !HIDDEN.has(x.name))
@@ -28,15 +28,12 @@ async function collect($: $, dir: string, depth: number, open: Set<string>, out:
         Number(b.kind === 'dir') - Number(a.kind === 'dir') ||
         a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     )
-  for (const [i, x] of sorted.entries()) {
+  for (const x of sorted) {
     if (out.length >= MAX_ROWS) return
     const path = join(dir, x.name)
     const isDir = x.kind === 'dir'
-    const isLast = i === sorted.length - 1
-    const guide = depth === 0 ? '' : prefix + (isLast ? '└ ' : '├ ')
-    out.push({ path, name: x.name, depth, isDir, guide })
-    const childPrefix = depth === 0 ? '' : prefix + (isLast ? '  ' : '│ ')
-    if (isDir && open.has(path)) await collect($, path, depth + 1, open, out, childPrefix)
+    out.push({ path, name: x.name, depth, isDir, guide: '│ '.repeat(depth) })
+    if (isDir && open.has(path)) await collect($, path, depth + 1, open, out)
   }
 }
 
@@ -168,22 +165,27 @@ async function activate($: $, row: Row, root: string) {
 
 const guard = ($: $, work: () => Promise<unknown>) => () => void work().catch(err => fail($, err))
 
-// File-type icon colors, VS Code-ish. A colored dot reads as an icon on any font (no Nerd Font needed).
-const EXT_COLOR: Record<string, string> = {
-  ts: '#3b8eea', tsx: '#3b8eea', mts: '#3b8eea', cts: '#3b8eea',
-  js: '#e5c07b', jsx: '#e5c07b', mjs: '#e5c07b', cjs: '#e5c07b',
-  json: '#d19a66', jsonc: '#d19a66', lock: '#7f848e',
-  md: '#56b6c2', mdx: '#56b6c2', txt: '#abb2bf',
-  py: '#4fa3e0', go: '#56b6c2', rs: '#d19a66', java: '#e06c75', rb: '#e06c75', php: '#a48fe0',
-  css: '#c678dd', scss: '#c678dd', html: '#e06c75', vue: '#98c379', svelte: '#e06c75',
-  yml: '#98c379', yaml: '#98c379', toml: '#98c379', ini: '#98c379', env: '#e5c07b',
-  sh: '#98c379', ps1: '#4fa3e0', bat: '#98c379',
-  png: '#c678dd', jpg: '#c678dd', jpeg: '#c678dd', gif: '#c678dd', svg: '#e5c07b', ico: '#c678dd',
-}
-const iconColor = (name: string) => EXT_COLOR[name.slice(name.lastIndexOf('.') + 1).toLowerCase()] ?? '#7f848e'
+const TRAIL_SHOWN = 5
 const isQuiet = (name: string) => name.startsWith('.') || name.endsWith('.lock') || name === 'node_modules'
 const fit = (text: string, width: number) =>
   text.length <= width ? text : width <= 1 ? '…' : `${text.slice(0, width - 1)}…`
+const pad = (text: string, width: number) => text + ' '.repeat(Math.max(0, width - text.length))
+
+function ago(at: number, now: number) {
+  const s = Math.max(0, Math.round((now - at) / 1000))
+  if (s < 60) return 'now'
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+// Open every folder between the root and `path`, then select and focus it.
+async function reveal($: $, root: string, path: string) {
+  const parents: string[] = []
+  for (let p = parentOf(path); p.length > root.length && isUnder(p, root); p = parentOf(p)) parents.push(p)
+  await update($, view, v => ({ ...v, expanded: [...new Set([...v.expanded, ...parents])], selected: path }))
+  await $.ui.focus({ requestId: PANE, key: ROW + path }).catch(() => {})
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -196,18 +198,27 @@ export const register: Register = on => {
   on('command.run', { command: 'directory' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE, focus: true })
 
-    return { text: 'Directory opened.' }
+    return { text: 'Directory opened' }
   })
 
-  // Highlight what Claude edits, and redraw after anything that may touch the disk.
+  // Claude's trail: what it read, created and edited, and a redraw after anything that may touch the disk.
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
+    const tool = String(e.tool)
     const fp = (e as { file_path?: unknown }).file_path
-    if (EDIT_TOOLS.has(String(e.tool)) && typeof fp === 'string') {
-      const root = await $.session.root()
-      const abs = /^([A-Za-z]:|[\\/])/.test(fp) ? fp : join(root, fp)
-      await update($, view, v => ({ ...v, touched: [...new Set([...v.touched, norm(abs)])], tick: v.tick + 1 }))
-    } else if (!['Read', 'Glob', 'Grep'].includes(String(e.tool))) {
+    const isFileTool = typeof fp === 'string' && (EDIT_TOOLS.has(tool) || tool === 'Read')
+    const root = isFileTool ? await $.session.root() : ''
+    const abs = isFileTool ? (/^([A-Za-z]:|[\\/])/.test(fp) ? fp : join(root, fp)) : ''
+    const existed = tool === 'Write' ? await $.fs.exists(abs) : true
+    const ran = await next(e)
+    if (isFileTool && !(ran as { isError?: boolean }).isError) {
+      const verb: TrailItem['verb'] = tool === 'Read' ? 'read' : existed ? 'edited' : 'created'
+      await update($, view, v => ({
+        ...v,
+        trail: [{ verb, path: abs, at: Date.now() }, ...v.trail.filter(t => norm(t.path) !== norm(abs))].slice(0, 50),
+        touched: verb === 'read' ? v.touched : [...new Set([...v.touched, norm(abs)])],
+        tick: v.tick + 1,
+      }))
+    } else if (!['Read', 'Glob', 'Grep'].includes(tool)) {
       await refresh($)
     }
 
@@ -225,26 +236,21 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (e.surface === 'mobile') {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>Directory needs a terminal or desktop session.</Text>
+      return <Text dimColor>Directory needs a terminal or desktop session</Text>
     }
     const { Box, Text, Button, Input } = $.ui.resolve(e)
-    const width = Math.max(20, e.props.bodyColumns ?? e.viewport?.columns ?? 40)
+    const width = Math.max(24, e.props.bodyColumns ?? e.viewport?.columns ?? 40)
     const root = await $.session.root()
     const v = await read($, view)
     const rows: Row[] = []
     await collect($, root, 0, new Set(v.expanded), rows)
+    const now = Date.now()
     const touched = v.touched
-    const isTouched = (r: Row) =>
+    const hasEdit = (r: Row) =>
       r.isDir ? touched.some(t => t.startsWith(norm(r.path) + '/')) : touched.includes(norm(r.path))
     const shown = (p: string) => rel(root, p) || baseOf(root)
     const act = (work: () => Promise<unknown>) => guard($, work)
     const rule = <Text color="subtle">{'─'.repeat(width)}</Text>
-
-    const tool = (hotkey: string, label: string, work: () => Promise<unknown>, isPrimary = false) => (
-      <Button key={`tb:${hotkey}`} plain hotkey={hotkey} dimColor={!isPrimary} onPress={act(work)}>
-        {label}
-      </Button>
-    )
 
     const needsSelection = async () => {
       const { selected } = await read($, view)
@@ -252,24 +258,31 @@ export const register: Register = on => {
       return selected
     }
 
+    const key = (hotkey: string, label: string, work: () => Promise<unknown>) => (
+      <Button key={`k:${hotkey}`} plain hotkey={hotkey} dimColor onPress={act(work)}>
+        {label}
+      </Button>
+    )
+
     const cancel = (
       <Button key="cancel" plain hotkey="q" dimColor onPress={act(() => setMode($, { kind: 'idle' }))}>
         cancel
       </Button>
     )
 
+    // Dialogs replace the key row while open: quiet frame, red only for delete.
     const mode = v.mode
     const dialog =
       mode.kind === 'newFile' || mode.kind === 'newFolder' ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
-          <Text bold color="claude">
-            {mode.kind === 'newFile' ? '+ New file' : '+ New folder'}
-            <Text dimColor> in {fit(shown(mode.dir), width - 20)}/</Text>
+        <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+          <Text>
+            {mode.kind === 'newFile' ? 'New file' : 'New folder'}
+            <Text dimColor> in {fit(shown(mode.dir), width - 18)}</Text>
           </Text>
           <Input
             key="name"
             autoFocus
-            placeholder={mode.kind === 'newFile' ? 'name.ts  (a/b.ts makes folders)' : 'folder name'}
+            placeholder={mode.kind === 'newFile' ? 'name.ts, or a/b.ts' : 'name'}
             submitLabel="create"
             onSubmit={value =>
               guard($, async () => {
@@ -281,9 +294,9 @@ export const register: Register = on => {
           {cancel}
         </Box>
       ) : mode.kind === 'rename' ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
-          <Text bold color="claude">
-            ✎ Rename <Text dimColor>{fit(shown(mode.path), width - 14)}</Text>
+        <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+          <Text>
+            Rename <Text dimColor>{fit(shown(mode.path), width - 12)}</Text>
           </Text>
           <Input
             key="name"
@@ -301,10 +314,10 @@ export const register: Register = on => {
         </Box>
       ) : mode.kind === 'delete' ? (
         <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
-          <Text bold color="error">
-            ✕ Delete {fit(shown(mode.path), width - 14)}?
+          <Text>
+            Delete <Text bold>{fit(shown(mode.path), width - 12)}</Text>
           </Text>
-          <Text dimColor>{isWin(root) ? 'It goes to the Recycle Bin.' : 'Uses trash if installed, else it is permanent.'}</Text>
+          <Text dimColor>{isWin(root) ? 'Moves it to the Recycle Bin' : 'Uses trash if installed, otherwise permanent'}</Text>
           <Box flexDirection="row" columnGap={2}>
             <Button
               key="yes"
@@ -324,75 +337,102 @@ export const register: Register = on => {
         </Box>
       ) : null
 
-    const toolbar = (
-      <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-        {tool('n', 'new file', async () => setMode($, { kind: 'newFile', dir: await targetDir($, root) }), true)}
-        {tool('f', 'new folder', async () => setMode($, { kind: 'newFolder', dir: await targetDir($, root) }), true)}
-        {tool('r', 'rename', async () => setMode($, { kind: 'rename', path: await needsSelection() }), true)}
-        {tool('d', 'delete', async () => setMode($, { kind: 'delete', path: await needsSelection() }), true)}
-        {tool('c', 'copy', async () => {
-          const path = await needsSelection()
-          await update($, view, s => ({ ...s, clip: { path, isCut: false } }))
-        })}
-        {tool('x', 'cut', async () => {
-          const path = await needsSelection()
-          await update($, view, s => ({ ...s, clip: { path, isCut: true } }))
-        })}
-        {tool('v', 'paste', () => paste($, root))}
-        {tool('o', 'open', async () => openExternal($, await needsSelection()))}
-        {tool('z', 'collapse', () => update($, view, s => ({ ...s, expanded: [] })))}
-        {tool('u', 'refresh', () => refresh($))}
-      </Box>
-    )
+    // This session: Claude's trail, the one place with color. Folds away while empty.
+    const trail = v.trail.slice(0, TRAIL_SHOWN)
+    const session =
+      trail.length === 0 ? null : (
+        <Box flexDirection="column">
+          <Text dimColor>This session</Text>
+          {trail.map(t => {
+            const when = ago(t.at, now)
+            const isChange = t.verb !== 'read'
+            return (
+              <Button key={`trail:${t.path}`} plain onPress={act(() => reveal($, root, t.path))}>
+                <Text color={isChange ? 'claude' : 'subtle'}>{isChange ? '◆ ' : '  '}</Text>
+                <Text dimColor>{pad(t.verb, 8)}</Text>
+                {pad(fit(shown(t.path), width - 16), width - 16)}
+                <Text dimColor>{when.padStart(4)}</Text>
+              </Button>
+            )
+          })}
+          {v.trail.length > TRAIL_SHOWN && <Text dimColor>  {v.trail.length - TRAIL_SHOWN} earlier</Text>}
+          {rule}
+        </Box>
+      )
 
+    // A row: guides, chevron, name, then Claude's mark in the right gutter.
     const row = (r: Row) => {
       const isOpen = r.isDir && v.expanded.includes(r.path)
       const isCut = v.clip?.isCut === true && v.clip.path === r.path
-      const isEdited = isTouched(r)
-      const room = width - r.guide.length - 2 - (isEdited ? 2 : 0)
+      const isEdited = hasEdit(r)
+      const lead = r.guide + (r.isDir ? (isOpen ? '▾ ' : '▸ ') : '  ')
+      const room = width - lead.length - 3
+      const name = fit(r.name, room)
       return (
         <Button key={ROW + r.path} plain onPress={act(() => activate($, r, root))}>
-          <Text color="subtle">{r.guide}</Text>
-          {r.isDir ? (
-            <Text color={isOpen ? 'claude' : 'subtle'}>{isOpen ? '▾ ' : '▸ '}</Text>
-          ) : (
-            <Text color={iconColor(r.name)}>{'● '}</Text>
-          )}
-          <Text
-            color={isEdited ? 'warning' : undefined}
-            dimColor={isCut || (isQuiet(r.name) && !isEdited)}
-            italic={isCut}
-            bold={r.path === v.selected}
-          >
-            {fit(r.name, room)}
+          <Text color="subtle">{lead}</Text>
+          <Text dimColor={isCut || isQuiet(r.name)} bold={r.path === v.selected}>
+            {name}
           </Text>
-          {isEdited ? <Text color="warning">{r.isDir ? ' •' : ' M'}</Text> : ''}
+          {' '.repeat(Math.max(1, room - name.length + 1))}
+          {isCut ? (
+            <Text dimColor>✂</Text>
+          ) : isEdited ? (
+            <Text color={r.isDir ? 'subtle' : 'claude'}>◆</Text>
+          ) : (
+            ' '
+          )}
         </Button>
       )
     }
 
-    const status = [
-      v.selected ? fit(shown(v.selected), width) : 'nothing selected',
-      v.clip ? `${v.clip.isCut ? '✂ cut' : '⧉ copied'} ${baseOf(v.clip.path)}` : '',
-      touched.length ? `${touched.length} edited by Claude` : '',
-    ].filter(Boolean)
+    const keys = (
+      <Box flexDirection="column">
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          {key('n', 'new', async () => setMode($, { kind: 'newFile', dir: await targetDir($, root) }))}
+          {key('f', 'folder', async () => setMode($, { kind: 'newFolder', dir: await targetDir($, root) }))}
+          {key('r', 'rename', async () => setMode($, { kind: 'rename', path: await needsSelection() }))}
+          {key('d', 'delete', async () => setMode($, { kind: 'delete', path: await needsSelection() }))}
+          {key('m', v.showMore ? 'less' : 'more', () => update($, view, s => ({ ...s, showMore: !s.showMore })))}
+        </Box>
+        {v.showMore && (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+            {key('c', 'copy', async () => {
+              const path = await needsSelection()
+              await update($, view, s => ({ ...s, clip: { path, isCut: false } }))
+            })}
+            {key('x', 'cut', async () => {
+              const path = await needsSelection()
+              await update($, view, s => ({ ...s, clip: { path, isCut: true } }))
+            })}
+            {key('v', 'paste', () => paste($, root))}
+            {key('o', 'open', async () => openExternal($, await needsSelection()))}
+            {key('z', 'collapse', () => update($, view, s => ({ ...s, expanded: [] })))}
+            {key('u', 'refresh', () => refresh($))}
+          </Box>
+        )}
+      </Box>
+    )
+
+    const status = v.clip
+      ? `${v.clip.isCut ? 'Cut' : 'Copied'} ${fit(baseOf(v.clip.path), width - 22)}, v to paste`
+      : v.selected
+        ? fit(shown(v.selected), width)
+        : 'Enter adds a file to your prompt'
 
     return (
       <Box flexDirection="column">
         <Text>
-          <Text bold color="claude">◆ DIRECTORY</Text>
-          <Text dimColor> · {fit(baseOf(root), width - 14)}</Text>
+          <Text bold>{fit(baseOf(root), width - 2)}</Text>
         </Text>
-        {dialog ?? toolbar}
         {rule}
-        {rows.length === 0 && <Text dimColor>This folder is empty. Press n to create a file.</Text>}
+        {session}
+        {rows.length === 0 && <Text dimColor>Empty folder, n to create a file</Text>}
         {rows.map(row)}
-        {rows.length >= MAX_ROWS && <Text dimColor>… more than {MAX_ROWS} rows; press z to collapse.</Text>}
+        {rows.length >= MAX_ROWS && <Text dimColor>Over {MAX_ROWS} rows shown, z collapses all</Text>}
         {rule}
-        {status.map(s => (
-          <Text dimColor>{s}</Text>
-        ))}
-        <Text color="subtle">enter open · @ on files · esc back to chat</Text>
+        <Text dimColor>{status}</Text>
+        {dialog ?? keys}
       </Box>
     )
   })
