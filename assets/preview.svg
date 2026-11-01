@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="960" height="520" viewBox="0 0 960 520" role="img" aria-label="A terminal with a Claude Code chat on the left and the Directory pane on the right, showing a file tree and the files Claude edited this session">
+  <style>
+    text { white-space: pre; font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; fill: #d6d3cf; }
+    .dim { fill: #8a8580; }
+    .sub { fill: #5b5753; }
+    .claude { fill: #d97757; }
+    .bold { font-weight: 600; }
+    .you { fill: #b7b2ac; }
+  </style>
+  <rect width="960" height="520" rx="14" fill="#151413"/>
+  <rect x="0.5" y="0.5" width="959" height="519" rx="13.5" fill="none" stroke="#2a2826"/>
+  <circle cx="24" cy="22" r="5" fill="#3a3734"/><circle cx="42" cy="22" r="5" fill="#3a3734"/><circle cx="60" cy="22" r="5" fill="#3a3734"/>
+  <text x="480" y="26" text-anchor="middle" class="sub">claude — my-app</text>
+  <line x1="0" y1="44" x2="960" y2="44" stroke="#24221f"/>
+
+  <!-- Chat -->
+  <text x="28" y="84" class="you">&gt; add token refresh to the auth session</text>
+  <text x="28" y="120"><tspan class="claude">●</tspan> I'll add a refresh helper and call it when</text>
+  <text x="44" y="140">a session is within five minutes of expiry.</text>
+  <text x="28" y="176"><tspan class="claude">●</tspan> <tspan class="bold">Read</tspan><tspan class="dim">(package.json)</tspan></text>
+  <text x="28" y="200"><tspan class="claude">●</tspan> <tspan class="bold">Write</tspan><tspan class="dim">(src/auth/token.ts)</tspan></text>
+  <text x="44" y="220" class="dim">⎿  Wrote 38 lines</text>
+  <text x="28" y="244"><tspan class="claude">●</tspan> <tspan class="bold">Update</tspan><tspan class="dim">(src/auth/session.ts)</tspan></text>
+  <text x="44" y="264" class="dim">⎿  Updated with 12 additions</text>
+  <text x="28" y="300"><tspan class="claude">●</tspan> Sessions now refresh their token before</text>
+  <text x="44" y="320">expiry. Tests pass.</text>
+  <rect x="24" y="452" width="516" height="40" rx="8" fill="none" stroke="#2f2c29"/>
+  <text x="40" y="477" class="dim">&gt; <tspan class="you">@src/auth/token.ts</tspan> explain the refresh window</text>
+
+  <!-- Pane -->
+  <line x1="564" y1="44" x2="564" y2="520" stroke="#2a2826"/>
+  <text x="584" y="80" class="bold">my-app</text>
+  <text x="584" y="98" class="sub">────────────────────────────────────────────────</text>
+  <text x="584" y="120" class="dim">This session</text>
+  <text x="584" y="142"><tspan class="claude">◆</tspan> <tspan class="dim">edited </tspan> src/auth/session.ts<tspan x="922" text-anchor="end" class="dim">now</tspan></text>
+  <text x="584" y="162"><tspan class="claude">◆</tspan> <tspan class="dim">created</tspan> src/auth/token.ts<tspan x="922" text-anchor="end" class="dim">1m</tspan></text>
+  <text x="584" y="182">  <tspan class="dim">read   </tspan> package.json<tspan x="922" text-anchor="end" class="dim">2m</tspan></text>
+  <text x="584" y="204" class="sub">────────────────────────────────────────────────</text>
+  <text x="584" y="226"><tspan class="sub">▸ </tspan><tspan class="dim">.github</tspan></text>
+  <text x="584" y="246"><tspan class="sub">▾ </tspan>src<tspan x="922" text-anchor="end" class="sub">◆</tspan></text>
+  <text x="584" y="266"><tspan class="sub">│ ▾ </tspan>auth<tspan x="922" text-anchor="end" class="sub">◆</tspan></text>
+  <rect x="580" y="273" width="348" height="20" rx="3" fill="#2a2724"/>
+  <text x="584" y="288"><tspan class="sub">│ │   </tspan><tspan class="bold">session.ts</tspan><tspan x="922" text-anchor="end" class="claude">◆</tspan></text>
+  <text x="584" y="308"><tspan class="sub">│ │   </tspan>token.ts<tspan x="922" text-anchor="end" class="claude">◆</tspan></text>
+  <text x="584" y="328"><tspan class="sub">│ ▸ </tspan>routes</text>
+  <text x="584" y="348"><tspan class="sub">▸ </tspan>tests</text>
+  <text x="584" y="368"><tspan class="sub">  </tspan>package.json</text>
+  <text x="584" y="388"><tspan class="sub">  </tspan>README.md</text>
+  <text x="584" y="408"><tspan class="sub">  </tspan><tspan class="dim">bun.lock</tspan></text>
+  <text x="584" y="448" class="sub">────────────────────────────────────────────────</text>
+  <text x="584" y="470" class="dim">src/auth/session.ts</text>
+  <text x="584" y="492" class="dim">n: new  f: folder  r: rename  m: more</text>
+</svg>
